@@ -261,6 +261,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethereum-nabla"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ethabi 18.0.0",
+ "num-bigint",
+ "prost 0.11.9",
+ "substreams",
+ "substreams-ethereum",
+ "tycho-substreams",
+]
+
+[[package]]
 name = "ethereum-sfrax"
 version = "0.1.0"
 dependencies = [
