@@ -1,0 +1,14 @@
+[package]
+name = "ethereum-nabla"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ethereum_nabla"
+crate-type = ["cdylib"]
+
+[dependencies]
+substreams.workspace = true
+substreams-ethereum.workspace = true
+prost.workspace = true
+tycho-substreams.workspace = true
