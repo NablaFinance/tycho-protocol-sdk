@@ -16,6 +16,7 @@ substreams-ethereum.workspace = true
 tycho-substreams.workspace = true
 anyhow = "1.0.75"
 num-bigint = "0.4.4"
+tempfile = "3.15.0"
 
 [build-dependencies]
 substreams-ethereum.workspace = true
