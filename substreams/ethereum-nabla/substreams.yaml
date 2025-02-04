@@ -10,6 +10,9 @@ protobuf:
     - tycho/evm/v1/utils.proto
   importPaths:
     - ../../proto
+  excludePaths:
+    - google
+    - sf/substreams
 
 binaries:
   default:
@@ -17,9 +20,10 @@ binaries:
     file: ../target/wasm32-unknown-unknown/release/ethereum_nabla.wasm
 
 modules:
-  - name: map_protocol_changes
+  - name: map_components
     kind: map
+    initialBlock: 266200000
     inputs:
       - source: sf.ethereum.type.v2.Block
     output:
-      type: proto:tycho.evm.state.v1.BlockContractChanges
+      type: proto:tycho.evm.v1.BlockTransactionProtocolComponents
