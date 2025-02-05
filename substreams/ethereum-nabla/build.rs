@@ -1,28 +1,8 @@
-use prost_build;
 use std::{error::Error, fs, io::Write};
 use substreams_ethereum::Abigen;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     compile_abi()?;
-    compile_proto()?;
-    Ok(())
-}
-
-fn compile_proto() -> Result<(), Box<dyn std::error::Error>> {
-    let proto_files = &["proto/sf/bstream/v1/bstream.proto"];
-    let proto_include_dirs = &["proto"];
-    let out_dir = "src/proto";
-    std::fs::create_dir_all(out_dir)?;
-
-    prost_build::Config::new()
-        .compile_well_known_types()
-        .out_dir(out_dir)
-        .compile_protos(proto_files, proto_include_dirs)?;
-
-    // Tell Cargo to rerun the build script if the proto file changes
-    for proto_file in proto_files {
-        println!("cargo:rerun-if-changed={}", proto_file);
-    }
     Ok(())
 }
 
