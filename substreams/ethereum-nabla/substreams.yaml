@@ -1,0 +1,39 @@
+specVersion: v0.1.0
+package:
+  name: "ethereum_nabla"
+  version: v0.1.0
+
+protobuf:
+  files:
+    - tycho/evm/v1/vm.proto
+    - tycho/evm/v1/common.proto
+    - tycho/evm/v1/utils.proto
+    - nabla.proto
+  importPaths:
+    - ./proto/v1
+    - ../../proto
+  excludePaths:
+    - google
+    - sf/substreams
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ../target/wasm32-unknown-unknown/release/ethereum_nabla.wasm
+
+modules:
+  - name: map_components
+    kind: map
+    initialBlock: 266195000
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:tycho.evm.v1.BlockTransactionProtocolComponents
+
+  - name: store_components
+    kind: store
+    initialBlock: 266195000
+    updatePolicy: set_if_not_exists
+    valueType: proto:nabla.v1.Component
+    inputs:
+      - map: map_components

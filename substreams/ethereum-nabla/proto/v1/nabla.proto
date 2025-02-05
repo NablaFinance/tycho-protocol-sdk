@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package nabla.v1;
+
+message Portal {
+  bytes address = 1;
+}
+
+message Router {
+  bytes address = 1;
+}
+
+message SwapPool {
+  bytes address = 1;
+}
+
+message Component {
+  oneof kind {
+    Portal portal = 1;
+    Router router = 2;
+    SwapPool swap_pool = 3;
+  }
+}

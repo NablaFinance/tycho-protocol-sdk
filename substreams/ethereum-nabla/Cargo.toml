@@ -1,0 +1,26 @@
+[package]
+name = "ethereum-nabla"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ethereum_nabla"
+crate-type = ["cdylib"]
+
+[dependencies]
+ethabi.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+substreams.workspace = true
+substreams-ethereum.workspace = true
+substreams-helper.workspace = true
+tycho-substreams.workspace = true
+hex.workspace = true
+tiny-keccak = "2.0"
+anyhow = "1.0.75"
+num-bigint = "0.4.4"
+tempfile = "3.15.0"
+itertools = "0.14.0"
+
+[build-dependencies]
+substreams-ethereum.workspace = true
