@@ -30,6 +30,8 @@ pub fn store_components(
             tx_pc
                 .components
                 .into_iter()
-                .for_each(|pc| store.set_if_not_exists(0, pc.id.clone(), &pc.into()))
+                .for_each(|pc| {
+                    store.set_if_not_exists(0, pc.id.clone(), &pc.into());
+                })
         });
 }
