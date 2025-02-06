@@ -3,11 +3,13 @@
 use crate::abi;
 use crate::abi::nabla_portal::events::{
     AssetRegistered, AssetUnregistered, EthForExactTokensSwapped, ExactTokensForEthSwapped,
-    ExactTokensForTokensSwapped, GuardActivated, GuardDeactivated, GuardOracleSet,
-    OracleAdapterSet, Paused, Unpaused,
+    ExactTokensForTokensSwapped, GateUpdated, GatedAccessDisabled, GatedAccessEnabled,
+    GuardActivated, GuardDeactivated, GuardOracleSet, OracleAdapterSet, OwnershipTransferred,
+    Paused, Unpaused,
 };
 use crate::modules::initial_state::{router, swap_pool};
-use crate::storage::{portal::ROUTERS, utils::read_bytes};
+use crate::storage::portal::{GATE, GATED, GUARD_ORACLE, ORACLE_ADAPTER, OWNER, PAUSED, ROUTERS};
+use crate::storage::utils::{read_bytes, StorageLocation};
 use substreams::scalar::BigInt;
 use substreams_ethereum::pb::eth::v2::{Log, StorageChange};
 use substreams_ethereum::Event;
@@ -16,7 +18,11 @@ use tiny_keccak::{Hasher, Keccak};
 use tycho_substreams::prelude::{Attribute, ChangeType, EntityChanges};
 
 pub trait EventTrait {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges>;
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges>;
 }
 
 pub enum EventType {
@@ -31,6 +37,10 @@ pub enum EventType {
     OracleAdapterSet(OracleAdapterSet),
     Paused(Paused),
     Unpaused(Unpaused),
+    GatedAccessEnabled(GatedAccessEnabled),
+    GatedAccessDisabled(GatedAccessDisabled),
+    OwnershipTransferred(OwnershipTransferred),
+    GateUpdated(GateUpdated),
 }
 
 impl EventType {
@@ -47,6 +57,10 @@ impl EventType {
             EventType::OracleAdapterSet(e) => e,
             EventType::Paused(e) => e,
             EventType::Unpaused(e) => e,
+            EventType::GatedAccessEnabled(e) => e,
+            EventType::GatedAccessDisabled(e) => e,
+            EventType::OwnershipTransferred(e) => e,
+            EventType::GateUpdated(e) => e,
         }
     }
 }
@@ -100,7 +114,11 @@ fn get_asset_registered_changed_attributes(storage_changes: &[StorageChange]) ->
 }
 
 impl EventTrait for AssetRegistered {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         substreams::log::info!("Getting AssetRegistered Entity Changes");
 
         let portal_entity_changes = EntityChanges {
@@ -127,92 +145,183 @@ impl EventTrait for AssetRegistered {
 }
 
 impl EventTrait for AssetUnregistered {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
     }
 }
 
 impl EventTrait for EthForExactTokensSwapped {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
     }
 }
 
 impl EventTrait for ExactTokensForEthSwapped {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
     }
 }
 
 impl EventTrait for ExactTokensForTokensSwapped {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
     }
 }
 
 impl EventTrait for GuardActivated {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
-        default()
-    }
-}
-
-impl EventTrait for GuardOracleSet {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
     }
 }
 
 impl EventTrait for GuardDeactivated {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
         default()
+    }
+}
+
+impl EventTrait for GuardOracleSet {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[GUARD_ORACLE])]
     }
 }
 
 impl EventTrait for OracleAdapterSet {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
-        default()
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[ORACLE_ADAPTER])]
     }
 }
 
 impl EventTrait for Paused {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
-        default()
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[PAUSED])]
     }
 }
 
 impl EventTrait for Unpaused {
-    fn get_entity_changes(&self, storage_changes: &[StorageChange]) -> Vec<EntityChanges> {
-        default()
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[PAUSED])]
     }
 }
 
-// let storage_location = StorageLocation {
-//     name: "gated",
-//     slot: hex!("0000000000000000000000000000000000000000000000000000000000000002"),
-//     offset: 20,
-//     number_of_bytes: 1,
-// };
-// for change in storage_changes {
-//     if change.key == storage_location.slot {
-//         let old_data = read_bytes(
-//             &change.old_value,
-//             storage_location.offset,
-//             storage_location.number_of_bytes,
-//         );
-//         let new_data = read_bytes(
-//             &change.new_value,
-//             storage_location.offset,
-//             storage_location.number_of_bytes,
-//         );
-//         if old_data != new_data {
-//             let attribute = Attribute {
-//                 name: storage_location.name.to_string(),
-//                 value: new_data.into(),
-//                 change: ChangeType::Update.into(),
-//             };
-//         }
-//     }
-// }
+impl EventTrait for GateUpdated {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[GATE])]
+    }
+}
+
+impl EventTrait for GatedAccessEnabled {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[GATED])]
+    }
+}
+
+impl EventTrait for GatedAccessDisabled {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[GATED])]
+    }
+}
+
+impl EventTrait for OwnershipTransferred {
+    fn get_entity_changes(
+        &self,
+        log: &Log,
+        storage_changes: &[StorageChange],
+    ) -> Vec<EntityChanges> {
+        vec![slot_entity_changes(&log.address, storage_changes, &[OWNER])]
+    }
+}
+
+fn extract_attribute_if_changed(
+    change: &StorageChange,
+    loc: &StorageLocation,
+) -> Option<Attribute> {
+    let old_value = read_bytes(&change.old_value, loc.offset, loc.number_of_bytes);
+    let new_value = read_bytes(&change.new_value, loc.offset, loc.number_of_bytes);
+    (old_value != new_value).then(|| Attribute {
+        name: loc.name.to_string(),
+        value: new_value.into(),
+        change: ChangeType::Update.into(),
+    })
+}
+
+fn extract_storage_attributes(
+    storage_changes: &[StorageChange],
+    locations: &[StorageLocation],
+) -> Vec<Attribute> {
+    locations
+        .iter()
+        .flat_map(|loc| {
+            storage_changes
+                .iter()
+                .find(|change| change.key == loc.slot)
+                .and_then(|change| extract_attribute_if_changed(change, loc))
+        })
+        .collect()
+}
+
+fn slot_entity_changes(
+    address: &Vec<u8>,
+    storage_changes: &[StorageChange],
+    locations: &[StorageLocation],
+) -> EntityChanges {
+    EntityChanges {
+        component_id: address.to_hex(),
+        attributes: extract_storage_attributes(storage_changes, locations),
+    }
+}
 
 pub fn decode_event(event: &Log) -> Option<EventType> {
     [
@@ -228,6 +337,10 @@ pub fn decode_event(event: &Log) -> Option<EventType> {
         OracleAdapterSet::match_and_decode(event).map(EventType::OracleAdapterSet),
         Paused::match_and_decode(event).map(EventType::Paused),
         Unpaused::match_and_decode(event).map(EventType::Unpaused),
+        GatedAccessEnabled::match_and_decode(event).map(EventType::GatedAccessEnabled),
+        GatedAccessDisabled::match_and_decode(event).map(EventType::GatedAccessDisabled),
+        OwnershipTransferred::match_and_decode(event).map(EventType::OwnershipTransferred),
+        GateUpdated::match_and_decode(event).map(EventType::GateUpdated),
     ]
     .into_iter()
     .find_map(std::convert::identity)

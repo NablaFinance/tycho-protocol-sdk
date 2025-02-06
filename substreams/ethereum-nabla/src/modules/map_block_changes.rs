@@ -39,7 +39,7 @@ fn portal_event(
     substreams::log::info!("Getting Portal Event Changes");
     let entity_changes = portal::decode_event(log).map(|e| {
         e.as_event_trait()
-            .get_entity_changes(storage_changes)
+            .get_entity_changes(log, storage_changes)
     })?;
     substreams::log::info!("Portal Entity Changes: {:?}", entity_changes);
     let component_id = log.address.to_hex();
