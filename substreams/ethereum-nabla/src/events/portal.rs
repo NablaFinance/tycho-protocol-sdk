@@ -9,6 +9,7 @@ use crate::abi::nabla_portal::events::{
 };
 use crate::modules::initial_state::{router, swap_pool};
 use crate::storage::portal::{GATE, GATED, GUARD_ORACLE, ORACLE_ADAPTER, OWNER, PAUSED, ROUTERS};
+use crate::storage::utils::StorageType;
 use crate::storage::utils::{read_bytes, StorageLocation};
 use substreams::scalar::BigInt;
 use substreams_ethereum::pb::eth::v2::{Log, StorageChange};
@@ -77,35 +78,46 @@ fn keccak_hash_slot(slot: &[u8]) -> BigInt {
     BigInt::from_unsigned_bytes_be(&hashed_slot)
 }
 
+fn compute_element_slot(slot: &[u8], new_length: &[u8]) -> BigInt {
+    keccak_hash_slot(slot) + BigInt::from_unsigned_bytes_be(new_length) - BigInt::from(1)
+}
+
+fn read_item_at_slot(
+    element_slot: BigInt,
+    storage_changes: &[StorageChange],
+    storage_type: &StorageType,
+) -> Result<Vec<u8>, String> {
+    storage_changes
+        .iter()
+        .find(|change| BigInt::from_unsigned_bytes_be(&change.key) == element_slot)
+        .map(|inner_change| {
+            let number_of_bytes = storage_type
+                .item_type()?
+                .number_of_bytes();
+            Ok(read_bytes(&inner_change.new_value, 0, number_of_bytes).to_vec())
+        })
+        .transpose()
+        .and_then(|opt| {
+            opt.ok_or_else(|| format!("Failed to find new element for slot: {}", element_slot))
+        })
+}
 fn get_asset_registered_changed_attributes(storage_changes: &[StorageChange]) -> Vec<Attribute> {
     let mut attributes = Vec::new();
 
     for change in storage_changes {
-        substreams::log::info!("Hex change key: {}", change.key.to_hex());
-        if change.key == ROUTERS.slot {
-            let old_length = read_bytes(&change.old_value, ROUTERS.offset, ROUTERS.number_of_bytes);
-            let new_length = read_bytes(&change.new_value, ROUTERS.offset, ROUTERS.number_of_bytes);
-            if old_length != new_length {
-                let length = BigInt::from_unsigned_bytes_be(new_length);
-                let last_index = &length - BigInt::from(1);
-                let element_slot = keccak_hash_slot(&ROUTERS.slot) + last_index;
-                for inner_change in storage_changes {
-                    if BigInt::from_unsigned_bytes_be(&inner_change.key) == element_slot {
-                        let new_element_value = read_bytes(
-                            &inner_change.new_value,
-                            ROUTERS.offset,
-                            ROUTERS.number_of_bytes, // should be 20 bytes
-                        );
-                        substreams::log::info!(
-                            "New router added: {:?}",
-                            new_element_value.to_vec().to_hex(),
-                        );
-                        attributes.push(Attribute {
-                            name: "new_router".to_string(),
-                            value: new_element_value.into(),
-                            change: ChangeType::Update.into(),
-                        });
-                    }
+        if let Some(new_length) = new_value_if_changed(change, &ROUTERS) {
+            let element_slot = compute_element_slot(&ROUTERS.slot, new_length);
+            match read_item_at_slot(element_slot, storage_changes, &ROUTERS.storage_type) {
+                Ok(new_element_value) => {
+                    substreams::log::info!("New router added: {:?}", new_element_value.to_hex());
+                    attributes.push(Attribute {
+                        name: "new_router".to_string(),
+                        value: new_element_value.into(),
+                        change: ChangeType::Update.into(),
+                    });
+                }
+                Err(e) => {
+                    substreams::log::info!("Failed to read new router: {}", e);
                 }
             }
         }
@@ -284,13 +296,21 @@ impl EventTrait for OwnershipTransferred {
     }
 }
 
+fn new_value_if_changed<'a>(change: &'a StorageChange, loc: &StorageLocation) -> Option<&'a [u8]> {
+    (change.key == loc.slot)
+        .then_some((
+            read_bytes(&change.old_value, loc.offset, loc.storage_type.number_of_bytes()),
+            read_bytes(&change.new_value, loc.offset, loc.storage_type.number_of_bytes()),
+        ))
+        .filter(|(old, new)| old != new)
+        .map(|(_, new)| new)
+}
+
 fn extract_attribute_if_changed(
     change: &StorageChange,
     loc: &StorageLocation,
 ) -> Option<Attribute> {
-    let old_value = read_bytes(&change.old_value, loc.offset, loc.number_of_bytes);
-    let new_value = read_bytes(&change.new_value, loc.offset, loc.number_of_bytes);
-    (old_value != new_value).then(|| Attribute {
+    new_value_if_changed(change, loc).map(|new_value| Attribute {
         name: loc.name.to_string(),
         value: new_value.into(),
         change: ChangeType::Update.into(),
@@ -306,8 +326,7 @@ fn extract_storage_attributes(
         .flat_map(|loc| {
             storage_changes
                 .iter()
-                .find(|change| change.key == loc.slot)
-                .and_then(|change| extract_attribute_if_changed(change, loc))
+                .filter_map(|change| extract_attribute_if_changed(change, loc))
         })
         .collect()
 }
