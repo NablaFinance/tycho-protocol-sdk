@@ -86,14 +86,11 @@ struct AssetRegisteredStorageKeys {
     assets_by_router: [u8; 32],
 }
 
-fn extract_asset_by_router_changes(
-    change: &StorageChange,
-    event: &AssetRegistered,
-) -> Result<Option<Attribute>, String> {
+fn asset_by_router_insertion(change: &StorageChange, event: &AssetRegistered) -> Option<Attribute> {
     let storage_type = ASSETS_BY_ROUTER
         .storage_type
         .base_type();
-    Ok(new_value_if_changed(change, 0, storage_type).map(|new_value| {
+    new_value_if_changed(change, 0, storage_type).map(|new_value| {
         let asset_by_router = AssetByRouter {
             router: event.router.clone(),
             asset: event.asset.clone(),
@@ -105,10 +102,10 @@ fn extract_asset_by_router_changes(
             value: asset_by_router.encode_to_vec(),
             change: ChangeType::Update.into(),
         }
-    }))
+    })
 }
 
-fn extract_router_asset_changes(
+fn router_asset_insertion(
     change: &StorageChange,
     event: &AssetRegistered,
     storage_changes: &[StorageChange],
@@ -133,7 +130,7 @@ fn extract_router_asset_changes(
         .transpose()
 }
 
-fn extract_router_changes(
+fn router_insertion(
     change: &StorageChange,
     storage_changes: &[StorageChange],
 ) -> Result<Option<Attribute>, String> {
@@ -153,18 +150,18 @@ fn extract_router_changes(
         .transpose()
 }
 
-fn match_storage_change(
+fn asset_registered_insertions(
     change: &StorageChange,
     event: &AssetRegistered,
     storage_changes: &[StorageChange],
     keys: &AssetRegisteredStorageKeys,
 ) -> Result<Option<Attribute>, String> {
     match &change.key {
-        key if key == &keys.assets_by_router => extract_asset_by_router_changes(change, event),
+        key if key == &keys.assets_by_router => Ok(asset_by_router_insertion(change, event)),
         key if key == &keys.router_assets => {
-            extract_router_asset_changes(change, event, storage_changes, keys.router_assets)
+            router_asset_insertion(change, event, storage_changes, keys.router_assets)
         }
-        key if key == &keys.router => extract_router_changes(change, storage_changes),
+        key if key == &keys.router => router_insertion(change, storage_changes),
         _ => {
             let new_value = read_bytes(&change.new_value, 0, GATE.storage_type.number_of_bytes());
             substreams::log::info!("New mystery value: {}", new_value.to_vec().to_hex());
@@ -174,11 +171,10 @@ fn match_storage_change(
 }
 
 fn get_asset_registered_changed_attributes(
+    event: &AssetRegistered,
     storage_changes: &[StorageChange],
     log: &Log,
 ) -> Vec<Attribute> {
-    let event = abi::nabla_portal::events::AssetRegistered::match_and_decode(log).unwrap();
-
     let router = pad_address(&event.router);
     let asset = pad_address(&event.asset);
 
@@ -194,7 +190,7 @@ fn get_asset_registered_changed_attributes(
     storage_changes
         .iter()
         .filter_map(|change| {
-            match_storage_change(change, &event, storage_changes, &keys).transpose()
+            asset_registered_insertions(change, &event, storage_changes, &keys).transpose()
         })
         .try_collect()
         .unwrap()
@@ -210,7 +206,7 @@ impl EventTrait for AssetRegistered {
 
         let portal_entity_changes = EntityChanges {
             component_id: self.sender.to_hex(),
-            attributes: get_asset_registered_changed_attributes(storage_changes, log),
+            attributes: get_asset_registered_changed_attributes(self, storage_changes, log),
         };
 
         let router_id: String = self.router.to_hex();
