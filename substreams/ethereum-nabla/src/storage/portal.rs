@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::storage::utils::{StorageLocation, StorageType};
 use substreams::hex;
 
@@ -43,9 +45,42 @@ pub const GUARD_ORACLE: StorageLocation = StorageLocation {
     offset: 0,
 };
 
+pub const ASSETS_BY_ROUTER: StorageLocation = StorageLocation {
+    name: "assets_by_router",
+    storage_type: StorageType::Mapping {
+        key_type: &StorageType::Address,
+        value_type: &StorageType::Mapping {
+            key_type: &StorageType::Address,
+            value_type: &StorageType::Bool,
+        },
+    },
+    slot: hex!("0000000000000000000000000000000000000000000000000000000000000005"),
+    offset: 0,
+};
+
 pub const ROUTERS: StorageLocation = StorageLocation {
     name: "routers",
     storage_type: StorageType::Array { item_type: &StorageType::Address },
     slot: hex!("0000000000000000000000000000000000000000000000000000000000000006"),
+    offset: 0,
+};
+
+pub const ROUTER_ASSETS: StorageLocation = StorageLocation {
+    name: "router_assets",
+    storage_type: StorageType::Mapping {
+        key_type: &StorageType::Address,
+        value_type: &StorageType::Array { item_type: &StorageType::Address },
+    },
+    slot: hex!("0000000000000000000000000000000000000000000000000000000000000007"),
+    offset: 0,
+};
+
+pub const GUARD_ON: StorageLocation = StorageLocation {
+    name: "guard_on",
+    storage_type: StorageType::Mapping {
+        key_type: &StorageType::Address,
+        value_type: &StorageType::Bool,
+    },
+    slot: hex!("0000000000000000000000000000000000000000000000000000000000000008"),
     offset: 0,
 };
