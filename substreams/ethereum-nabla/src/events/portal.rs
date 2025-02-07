@@ -14,7 +14,9 @@ use crate::storage::portal::{
     ASSETS_BY_ROUTER, GATE, GATED, GUARD_ON, GUARD_ORACLE, ORACLE_ADAPTER, OWNER, PAUSED, ROUTERS,
     ROUTER_ASSETS,
 };
-use crate::storage::utils::StorageType;
+use crate::storage::utils::{
+    compute_element_slot, compute_mapping_key, pad_address, read_item_at_slot, StorageType,
+};
 use crate::storage::utils::{read_bytes, StorageLocation};
 use crate::{abi, storage};
 use itertools::Itertools;
@@ -78,60 +80,6 @@ fn default() -> Vec<EntityChanges> {
     vec![EntityChanges { component_id: "default".into(), attributes: vec![] }]
 }
 
-fn keccak_hash_slot(slot: &[u8]) -> BigInt {
-    let mut hasher = Keccak::v256();
-    let mut hashed_slot = [0u8; 32];
-    hasher.update(slot);
-    hasher.finalize(&mut hashed_slot);
-    BigInt::from_unsigned_bytes_be(&hashed_slot)
-}
-
-fn compute_element_slot(slot: &[u8], new_length: &[u8]) -> BigInt {
-    keccak_hash_slot(slot) + BigInt::from_unsigned_bytes_be(new_length) - BigInt::from(1)
-}
-
-fn read_item_at_slot(
-    element_slot: BigInt,
-    storage_changes: &[StorageChange],
-    storage_type: &StorageType,
-) -> Result<Vec<u8>, String> {
-    storage_changes
-        .iter()
-        .find(|change| BigInt::from_unsigned_bytes_be(&change.key) == element_slot)
-        .map(|inner_change| {
-            let number_of_bytes = storage_type
-                .item_type()?
-                .number_of_bytes();
-            Ok(read_bytes(&inner_change.new_value, 0, number_of_bytes).to_vec())
-        })
-        .transpose()
-        .and_then(|opt| {
-            opt.ok_or_else(|| format!("Failed to find new element for slot: {}", element_slot))
-        })
-}
-
-fn keccak256(input: &[u8]) -> [u8; 32] {
-    use tiny_keccak::Keccak;
-    let mut hasher = Keccak::v256();
-    let mut output = [0u8; 32];
-    hasher.update(input);
-    hasher.finalize(&mut output);
-    output
-}
-
-fn compute_mapping_key<T: AsRef<[u8]>>(key: T, slot: &[u8; 32]) -> [u8; 32] {
-    let mut input = Vec::new();
-    input.extend_from_slice(&key.as_ref());
-    input.extend_from_slice(&slot.as_ref());
-    keccak256(&input)
-}
-
-fn pad_address(addr: &[u8]) -> [u8; 32] {
-    let mut padded = [0u8; 32];
-    padded[12..].copy_from_slice(addr);
-    padded
-}
-
 struct AssetRegisteredStorageKeys {
     router: [u8; 32],
     router_assets: [u8; 32],
@@ -144,8 +92,7 @@ fn extract_asset_by_router_changes(
 ) -> Result<Option<Attribute>, String> {
     let storage_type = ASSETS_BY_ROUTER
         .storage_type
-        .value_type()?
-        .value_type()?;
+        .base_type();
     Ok(new_value_if_changed(change, 0, storage_type).map(|new_value| {
         let asset_by_router = AssetByRouter {
             router: event.router.clone(),
@@ -167,14 +114,12 @@ fn extract_router_asset_changes(
     storage_changes: &[StorageChange],
     router_assets_key: [u8; 32],
 ) -> Result<Option<Attribute>, String> {
-    let storage_type = ROUTER_ASSETS
-        .storage_type
-        .value_type()?;
+    let storage_type = ROUTER_ASSETS.storage_type.base_type();
     new_value_if_changed(change, 0, storage_type)
         .map(|new_value| compute_element_slot(&router_assets_key, new_value))
         .map(|element_slot| read_item_at_slot(element_slot, storage_changes, &storage_type))
         .map(|result| {
-            result.map(|new_element_value: Vec<u8>| {
+            result.map(|new_element_value| {
                 let router_asset =
                     RouterAsset { router: event.router.clone(), asset: new_element_value };
                 substreams::log::info!("New RouterAsset: {:?}", router_asset);

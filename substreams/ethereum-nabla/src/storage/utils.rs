@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+use substreams::scalar::BigInt;
+use substreams_ethereum::pb::eth::v2::StorageChange;
+use tiny_keccak::{Hasher, Keccak};
 
 #[derive(Clone, Debug)]
 pub enum StorageType {
@@ -10,6 +13,16 @@ pub enum StorageType {
 }
 
 impl StorageType {
+    pub fn base_type(&self) -> &StorageType {
+        match self {
+            StorageType::Address => self,
+            StorageType::Bool => self,
+            StorageType::Uint256 => self,
+            StorageType::Array { item_type } => item_type.base_type(),
+            StorageType::Mapping { value_type, .. } => value_type.base_type(),
+        }
+    }
+
     pub fn number_of_bytes(&self) -> usize {
         match self {
             StorageType::Address => 20,
@@ -17,27 +30,6 @@ impl StorageType {
             StorageType::Uint256 => 32,
             StorageType::Array { .. } => 32,
             StorageType::Mapping { .. } => 32,
-        }
-    }
-    pub fn item_type(&self) -> Result<&StorageType, String> {
-        if let StorageType::Array { item_type } = self {
-            Ok(item_type)
-        } else {
-            Err("StorageType is not an Array".into())
-        }
-    }
-    pub fn key_type(&self) -> Result<&StorageType, String> {
-        if let StorageType::Mapping { key_type, .. } = self {
-            Ok(key_type)
-        } else {
-            Err("StorageType is not a Mapping".into())
-        }
-    }
-    pub fn value_type(&self) -> Result<&StorageType, String> {
-        if let StorageType::Mapping { value_type, .. } = self {
-            Ok(value_type)
-        } else {
-            Err("StorageType is not a Mapping".into())
         }
     }
 }
@@ -82,4 +74,45 @@ pub fn read_bytes(buf: &[u8], offset: usize, number_of_bytes: usize) -> &[u8] {
     let start = start_opt.unwrap();
 
     &buf[start..=end]
+}
+
+fn keccak256(input: &[u8]) -> [u8; 32] {
+    let mut hasher = Keccak::v256();
+    let mut output = [0u8; 32];
+    hasher.update(input);
+    hasher.finalize(&mut output);
+    output
+}
+
+pub fn compute_element_slot(slot: &[u8], new_length: &[u8]) -> BigInt {
+    BigInt::from_unsigned_bytes_be(&keccak256(slot)) + BigInt::from_unsigned_bytes_be(new_length)
+        - BigInt::one()
+}
+
+pub fn compute_mapping_key(key: &[u8; 32], slot: &[u8; 32]) -> [u8; 32] {
+    let mut input = [0u8; 64];
+    input[0..32].copy_from_slice(key);
+    input[32..64].copy_from_slice(slot);
+    keccak256(&input)
+}
+
+pub fn pad_address(addr: &[u8]) -> [u8; 32] {
+    let mut padded = [0u8; 32];
+    padded[12..].copy_from_slice(addr);
+    padded
+}
+
+pub fn read_item_at_slot(
+    element_slot: BigInt,
+    storage_changes: &[StorageChange],
+    storage_type: &StorageType,
+) -> Result<Vec<u8>, String> {
+    storage_changes
+        .iter()
+        .find(|change| BigInt::from_unsigned_bytes_be(&change.key) == element_slot)
+        .map(|inner_change| {
+            let number_of_bytes = storage_type.number_of_bytes();
+            read_bytes(&inner_change.new_value, 0, number_of_bytes).to_vec()
+        })
+        .ok_or_else(|| format!("Failed to find new element for slot: {}", element_slot))
 }
