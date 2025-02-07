@@ -2,7 +2,6 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-use crate::abi;
 use crate::abi::nabla_portal::events::{
     AssetRegistered, AssetUnregistered, EthForExactTokensSwapped, ExactTokensForEthSwapped,
     ExactTokensForTokensSwapped, GateUpdated, GatedAccessDisabled, GatedAccessEnabled,
@@ -10,12 +9,15 @@ use crate::abi::nabla_portal::events::{
     Paused, Unpaused,
 };
 use crate::modules::initial_state::{router, swap_pool};
+use crate::pb::nabla::v1::{AssetByRouter, RouterAsset};
 use crate::storage::portal::{
     ASSETS_BY_ROUTER, GATE, GATED, GUARD_ON, GUARD_ORACLE, ORACLE_ADAPTER, OWNER, PAUSED, ROUTERS,
     ROUTER_ASSETS,
 };
 use crate::storage::utils::StorageType;
 use crate::storage::utils::{read_bytes, StorageLocation};
+use crate::{abi, storage};
+use prost::Message;
 use substreams::scalar::BigInt;
 use substreams_ethereum::pb::eth::v2::{Log, StorageChange};
 use substreams_ethereum::Event;
@@ -129,78 +131,131 @@ fn pad_address(addr: &[u8]) -> [u8; 32] {
     padded
 }
 
+struct AssetRegisteredStorageKeys {
+    router: [u8; 32],
+    router_assets: [u8; 32],
+    assets_by_router: [u8; 32],
+}
+
+fn extract_asset_by_router_changes(
+    change: &StorageChange,
+    event: &AssetRegistered,
+) -> Option<Attribute> {
+    let storage_type = ASSETS_BY_ROUTER
+        .storage_type
+        .value_type()
+        .unwrap()
+        .value_type()
+        .unwrap();
+    let new_value = new_value_if_changed(change, 0, storage_type)?;
+    let asset_by_router = AssetByRouter {
+        router: event.router.clone(),
+        asset: event.asset.clone(),
+        value: new_value[0] != 0,
+    };
+    substreams::log::info!("New AssetByRouter {:?}", asset_by_router);
+    Some(Attribute {
+        name: "assetsByRouter".to_string(),
+        value: asset_by_router.encode_to_vec(),
+        change: ChangeType::Update.into(),
+    })
+}
+
+fn extract_router_asset_changes(
+    change: &StorageChange,
+    event: &AssetRegistered,
+    storage_changes: &[StorageChange],
+    router_assets_key: [u8; 32],
+) -> Option<Attribute> {
+    let storage_type = ROUTER_ASSETS
+        .storage_type
+        .value_type()
+        .unwrap();
+    let new_value = new_value_if_changed(change, 0, storage_type)?;
+    let element_slot = compute_element_slot(&router_assets_key, new_value);
+    match read_item_at_slot(element_slot, storage_changes, &storage_type) {
+        Ok(new_element_value) => {
+            let router_asset =
+                RouterAsset { asset: event.asset.clone(), router: event.router.clone() };
+            substreams::log::info!("New RouterAsset {:?}", router_asset);
+            Some(Attribute {
+                name: "routerAssets".to_string(),
+                value: router_asset.encode_to_vec(),
+                change: ChangeType::Update.into(),
+            })
+        }
+        Err(e) => {
+            substreams::log::info!("Failed to read new router asset: {}", e);
+            None
+        }
+    }
+}
+
+fn extract_router_changes(
+    change: &StorageChange,
+    storage_changes: &[StorageChange],
+) -> Option<Attribute> {
+    let new_value = new_value_if_changed(change, 0, &ROUTERS.storage_type)?;
+    let element_slot = compute_element_slot(&ROUTERS.slot, new_value);
+    match read_item_at_slot(element_slot, storage_changes, &ROUTERS.storage_type) {
+        Ok(new_element_value) => {
+            substreams::log::info!("New router added: {:?}", new_element_value.to_hex());
+            Some(Attribute {
+                name: "routers".to_string(),
+                value: new_element_value.into(),
+                change: ChangeType::Update.into(),
+            })
+        }
+        Err(e) => {
+            substreams::log::info!("Failed to read new router: {}", e);
+            None
+        }
+    }
+}
+
+fn match_storage_change(
+    change: &StorageChange,
+    event: &AssetRegistered,
+    storage_changes: &[StorageChange],
+    keys: &AssetRegisteredStorageKeys,
+) -> Option<Attribute> {
+    match &change.key {
+        key if key == &keys.assets_by_router => extract_asset_by_router_changes(change, event),
+        key if key == &keys.router_assets => {
+            extract_router_asset_changes(change, event, storage_changes, keys.router_assets)
+        }
+        key if key == &keys.router => extract_router_changes(change, storage_changes),
+        _ => {
+            let new_value = read_bytes(&change.new_value, 0, GATE.storage_type.number_of_bytes());
+            substreams::log::info!("New mystery value: {}", new_value.to_vec().to_hex());
+            None
+        }
+    }
+}
+
 fn get_asset_registered_changed_attributes(
     storage_changes: &[StorageChange],
     log: &Log,
 ) -> Vec<Attribute> {
-    let mut attributes = Vec::new();
-
     let event = abi::nabla_portal::events::AssetRegistered::match_and_decode(log).unwrap();
+    substreams::log::info!("router: {:?}, asset {:?}", event.router, event.asset);
+
     let router = pad_address(&event.router);
     let asset = pad_address(&event.asset);
 
-    let assets_by_router_key = compute_mapping_key(&router, &ASSETS_BY_ROUTER.slot);
-    let nested_key = compute_mapping_key(&asset, &assets_by_router_key);
-    let router_assets_key = compute_mapping_key(&router, &ROUTER_ASSETS.slot);
+    let keys = AssetRegisteredStorageKeys {
+        router: ROUTERS.slot,
+        router_assets: compute_mapping_key(&router, &ROUTER_ASSETS.slot),
+        assets_by_router: compute_mapping_key(
+            &asset,
+            &compute_mapping_key(&router, &ASSETS_BY_ROUTER.slot),
+        ),
+    };
 
-    for change in storage_changes {
-        if change.key == assets_by_router_key {
-            substreams::log::info!("Key belongs to ASSETS_BY_ROUTER mapping");
-        } else if change.key == nested_key {
-            substreams::log::info!("Key belongs to NESTED ASSETS_BY_ROUTER mapping");
-        } else if change.key == router_assets_key {
-            substreams::log::info!("Key belongs to ROUTER_ASSETS mapping");
-        }
-
-        // substreams::log::info!(
-        //     "Portal Storage Change Key: {} - {} - {} - {}",
-        //     change.key.to_hex(),
-        //     assets_by_router_key.to_vec().to_hex(),
-        //     nested_key.to_vec().to_hex(),
-        //     router_assets_key.to_vec().to_hex(),
-        // );
-
-        if let Some(new_length) = new_value_if_changed(change, &ROUTERS) {
-            let element_slot = compute_element_slot(&ROUTERS.slot, new_length);
-            match read_item_at_slot(element_slot, storage_changes, &ROUTERS.storage_type) {
-                Ok(new_element_value) => {
-                    substreams::log::info!("New router added: {:?}", new_element_value.to_hex());
-                    attributes.push(Attribute {
-                        name: "new_router".to_string(),
-                        value: new_element_value.into(),
-                        change: ChangeType::Update.into(),
-                    });
-                }
-                Err(e) => {
-                    substreams::log::info!("Failed to read new router: {}", e);
-                }
-            }
-        }
-
-        if let Some(new_value) = new_value_if_changed(change, &ROUTER_ASSETS) {
-            substreams::log::info!("Router Assets changed");
-            // let key = new_value; // You may need to cast or parse the key depending on its type
-            // let element_slot = compute_element_slot(&ROUTER_ASSETS.slot, &key);
-            // match read_item_at_slot(element_slot, storage_changes, &ROUTER_ASSETS.storage_type) {
-            //     Ok(updated_value) => {
-            //         substreams::log::info!("Router assets updated for key: {:?}", key);
-            //         attributes.push(Attribute {
-            //             name: "updated_router_asset".to_string(),
-            //             value: updated_value.into(),
-            //             change: ChangeType::Update.into(),
-            //         });
-            //     }
-            //     Err(e) => {
-            //         substreams::log::info!(
-            //             "Failed to read updated router asset for key {:?}: {}",
-            //             key,
-            //             e
-            //         );
-            //     }
-            // }
-        }
-    }
-    attributes
+    storage_changes
+        .iter()
+        .filter_map(|change| match_storage_change(change, &event, storage_changes, &keys))
+        .collect()
 }
 
 impl EventTrait for AssetRegistered {
@@ -374,25 +429,30 @@ impl EventTrait for OwnershipTransferred {
     }
 }
 
-fn new_value_if_changed<'a>(change: &'a StorageChange, loc: &StorageLocation) -> Option<&'a [u8]> {
-    (change.key == loc.slot)
-        .then_some((
-            read_bytes(&change.old_value, loc.offset, loc.storage_type.number_of_bytes()),
-            read_bytes(&change.new_value, loc.offset, loc.storage_type.number_of_bytes()),
-        ))
-        .filter(|(old, new)| old != new)
-        .map(|(_, new)| new)
+fn new_value_if_changed<'a>(
+    change: &'a StorageChange,
+    offset: usize,
+    storage_type: &StorageType,
+) -> Option<&'a [u8]> {
+    Some((
+        read_bytes(&change.old_value, offset, storage_type.number_of_bytes()),
+        read_bytes(&change.new_value, offset, storage_type.number_of_bytes()),
+    ))
+    .filter(|(old, new)| old != new)
+    .map(|(_, new)| new)
 }
 
 fn extract_attribute_if_changed(
     change: &StorageChange,
     loc: &StorageLocation,
 ) -> Option<Attribute> {
-    new_value_if_changed(change, loc).map(|new_value| Attribute {
-        name: loc.name.to_string(),
-        value: new_value.into(),
-        change: ChangeType::Update.into(),
-    })
+    (change.key == loc.slot).then_some(
+        new_value_if_changed(change, loc.offset, &loc.storage_type).map(|new_value| Attribute {
+            name: loc.name.to_string(),
+            value: new_value.into(),
+            change: ChangeType::Update.into(),
+        })?,
+    )
 }
 
 fn extract_storage_attributes(

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StorageType {
     Address,
     Bool,
