@@ -37,3 +37,12 @@ modules:
     valueType: proto:nabla.v1.Component
     inputs:
       - map: map_components
+
+  - name: map_block_changes
+    kind: map
+    initialBlock: 266195000
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+      - store: store_components
+    output:
+      type: proto:tycho.evm.v1.BlockEntityChanges

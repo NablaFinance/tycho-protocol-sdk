@@ -21,3 +21,14 @@ message Component {
     SwapPool swap_pool = 3;
   }
 }
+
+message RouterAsset {
+    bytes router = 1;
+    bytes asset = 2;
+}
+
+message AssetByRouter {
+    bytes router = 1;
+    bytes asset = 2;
+    bool value = 3;
+}
