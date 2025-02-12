@@ -84,6 +84,8 @@ struct AssetRegisteredStorageKeys {
     router: [u8; 32],
     router_assets: [u8; 32],
     assets_by_router: [u8; 32],
+    new_router: BigInt,
+    new_router_asset: BigInt,
 }
 
 fn asset_by_router_insertion(change: &StorageChange, event: &AssetRegistered) -> Option<Attribute> {
@@ -157,6 +159,40 @@ fn asset_registered_insertions(
     keys: &AssetRegisteredStorageKeys,
 ) -> Result<Option<Attribute>, String> {
     match &change.key {
+        key if BigInt::from_unsigned_bytes_be(&key) == keys.new_router => {
+            match read_item_at_slot(keys.new_router.clone(), storage_changes, &ROUTERS.storage_type) {
+                Ok(new_element_value) => {
+                    if new_element_value.to_hex() != event.router.to_hex() {
+                        substreams::log::info!(
+                            "New router mismatch. Storage: {:?}, Event: {:?}", 
+                            new_element_value.to_hex(),
+                            event.router.to_hex(),
+                        );
+                    }
+                    Ok(None)
+                }
+                Err(e) => {
+                    Ok(None)
+                },
+            }
+        },
+        key if BigInt::from_unsigned_bytes_be(&key) == keys.new_router_asset => {
+            match read_item_at_slot(keys.new_router_asset.clone(), storage_changes, &ASSETS_BY_ROUTER.storage_type) {
+                Ok(new_element_value) => {
+                    if new_element_value.to_hex() != event.asset.to_hex() {
+                        substreams::log::info!(
+                            "New router mismatch. Storage: {:?}, Event: {:?}", 
+                            new_element_value.to_hex(),
+                            event.asset.to_hex(),
+                        );
+                    }
+                    Ok(None)
+                }
+                Err(e) => {
+                    Ok(None)
+                },
+            }
+        },
         key if key == &keys.assets_by_router => Ok(asset_by_router_insertion(change, event)),
         key if key == &keys.router_assets => {
             router_asset_insertion(change, event, storage_changes, keys.router_assets)
@@ -178,14 +214,32 @@ fn get_asset_registered_changed_attributes(
     let router = pad_address(&event.router);
     let asset = pad_address(&event.asset);
 
+
+    let router_assets_key = compute_mapping_key(&router, &ROUTER_ASSETS.slot);
+    
+    let mut new_router_slot = BigInt::from(0);
+    let mut new_router_asset_slot = BigInt::from(0);
+
+    let closure = |change: &StorageChange| {
+        if &change.key == &router_assets_key {
+            new_router_asset_slot = compute_element_slot(&router_assets_key, &change.new_value);
+        } else if &change.key == &ROUTERS.slot {
+            new_router_slot = compute_element_slot(&ROUTERS.slot, &change.new_value);
+        }
+    };
+
     let keys = AssetRegisteredStorageKeys {
         router: ROUTERS.slot,
-        router_assets: compute_mapping_key(&router, &ROUTER_ASSETS.slot),
+        router_assets: router_assets_key,
         assets_by_router: compute_mapping_key(
             &asset,
             &compute_mapping_key(&router, &ASSETS_BY_ROUTER.slot),
         ),
+        new_router: new_router_slot,
+        new_router_asset: new_router_asset_slot, 
     };
+
+        
 
     storage_changes
         .iter()
